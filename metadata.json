@@ -1,0 +1,7 @@
+{
+  "name": "旅游排雷工",
+  "description": "基于 AI 的智能旅游助手，提供行程避雷、菜单扫描防宰、防骗检测等功能，助你畅游",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
