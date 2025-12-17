@@ -10,8 +10,6 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
  */
 export const generateRoutePlan = async (text: string): Promise<RoutePlan> => {
   try {
-    // Note: When using googleMaps tool, responseMimeType: 'application/json' is NOT supported.
-    // We must request JSON in the prompt and parse the string manually.
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `你是一个智能旅游行程规划师。请分析用户提供的旅游攻略文本，生成一份详细的路线规划。
@@ -25,44 +23,50 @@ export const generateRoutePlan = async (text: string): Promise<RoutePlan> => {
          - 否则推荐打车或公交。
       4. 给整个行程起一个吸引人的标题。
       
-      攻略文本: "${text}"
-      
-      请直接返回合法的 JSON 字符串，**不要**包含 Markdown 代码块标记（如 \`\`\`json）。格式如下：
-      {
-        "title": "行程标题",
-        "nodes": [
-          {
-            "id": 1, 
-            "name": "地点名", 
-            "description": "介绍", 
-            "type": "FOOD" | "SCENERY" | "HOTEL" | "OTHER",
-            "estimatedStay": "2小时"
-          }
-        ],
-        "edges": [
-          {
-            "from": 1,
-            "to": 2,
-            "transportMode": "WALK" | "TAXI" | "BUS" | "SUBWAY",
-            "duration": "15分钟",
-            "distance": "1.2km",
-            "details": "地铁1号线"
-          }
-        ]
-      }`,
+      攻略文本: "${text}"`,
       config: {
-        tools: [{ googleMaps: {} }],
-        // responseMimeType: "application/json" is purposefully omitted due to incompatibility with googleMaps tool
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            nodes: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.INTEGER },
+                  name: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  type: { type: Type.STRING, enum: ["FOOD", "SCENERY", "HOTEL", "OTHER"] },
+                  estimatedStay: { type: Type.STRING }
+                },
+                required: ["id", "name", "description", "type"]
+              }
+            },
+            edges: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  from: { type: Type.INTEGER },
+                  to: { type: Type.INTEGER },
+                  transportMode: { type: Type.STRING, enum: ["WALK", "TAXI", "BUS", "SUBWAY"] },
+                  duration: { type: Type.STRING },
+                  distance: { type: Type.STRING },
+                  details: { type: Type.STRING }
+                },
+                required: ["from", "to", "transportMode", "duration", "distance"]
+              }
+            }
+          },
+          required: ["title", "nodes", "edges"]
+        }
       }
     });
 
-    let jsonStr = response.text || "";
-    
-    // Clean up potential markdown formatting if the model ignores the instruction
-    jsonStr = jsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
-
-    if (jsonStr) {
-      return JSON.parse(jsonStr) as RoutePlan;
+    if (response.text) {
+      return JSON.parse(response.text) as RoutePlan;
     }
     throw new Error("No response text from Gemini");
   } catch (error) {
