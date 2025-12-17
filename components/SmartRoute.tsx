@@ -69,8 +69,10 @@ const SmartRoute: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
   const [hoveredNode, setHoveredNode] = useState<{ node: RouteNode, x: number, y: number } | null>(null);
+  
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const zoomBehavior = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
 
   const handleGenerate = async () => {
     if (!inputText.trim()) return;
@@ -87,6 +89,40 @@ const SmartRoute: React.FC = () => {
     }
   };
 
+  const handleZoomIn = () => {
+    if (svgRef.current && zoomBehavior.current) {
+      d3.select(svgRef.current)
+        .transition()
+        .duration(300)
+        .call(zoomBehavior.current.scaleBy, 1.2);
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (svgRef.current && zoomBehavior.current) {
+      d3.select(svgRef.current)
+        .transition()
+        .duration(300)
+        .call(zoomBehavior.current.scaleBy, 0.8);
+    }
+  };
+
+  const handleResetZoom = () => {
+    if (svgRef.current && zoomBehavior.current && routePlan) {
+      // Re-center logic similar to initial load
+      const containerWidth = containerRef.current?.clientWidth || 800;
+      const initialScale = 0.8;
+      // Estimate content width roughly
+      const layoutWidth = Math.max(containerWidth, 800);
+      const initialX = (containerWidth - layoutWidth * initialScale) / 2 + 100; // offset slightly
+      
+      d3.select(svgRef.current)
+        .transition()
+        .duration(750)
+        .call(zoomBehavior.current.transform, d3.zoomIdentity.translate(initialX, 50).scale(initialScale));
+    }
+  };
+
   // Visualization Logic
   useEffect(() => {
     if (!routePlan || !svgRef.current || !containerRef.current) return;
@@ -94,8 +130,26 @@ const SmartRoute: React.FC = () => {
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove(); // Clear previous drawing
 
+    const containerWidth = containerRef.current.clientWidth;
+    const containerHeight = containerRef.current.clientHeight;
+
+    // --- 1. Setup Zoom & Groups ---
+    const contentGroup = svg.append("g").attr("class", "content-group");
+
+    const zoom = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 3])
+      .on("zoom", (event) => {
+        contentGroup.attr("transform", event.transform);
+        // Hide tooltip on zoom/pan to prevent detached floating tooltips
+        setHoveredNode(null); 
+      });
+
+    zoomBehavior.current = zoom;
+    svg.call(zoom).on("dblclick.zoom", null);
+
+    // --- 2. Layout Calculation ---
     // Define Arrow Marker
-    svg.append("defs").append("marker")
+    contentGroup.append("defs").append("marker")
       .attr("id", "arrowhead")
       .attr("viewBox", "0 -5 10 10")
       .attr("refX", 22) // Position relative to end of line
@@ -107,17 +161,11 @@ const SmartRoute: React.FC = () => {
       .attr("d", "M0,-5L10,0L0,5")
       .attr("fill", "#94a3b8");
 
-    const containerWidth = containerRef.current.clientWidth;
-    const width = Math.max(containerWidth, 600); 
+    const layoutWidth = Math.max(containerWidth, 800); // Fixed virtual width for layout consistency
     const padding = 80;
     
     // Sort Nodes based on connectivity (Topology) rather than array order
     const orderedNodes = reorderNodes(routePlan.nodes, routePlan.edges);
-
-    // Calculate heights based on content
-    const calculatedHeight = Math.max(600, orderedNodes.length * 160 + padding * 2);
-    svg.attr("height", calculatedHeight);
-    svg.attr("width", width);
 
     // Calculate positions (Snake layout: Down, then zig-zag)
     const nodes = orderedNodes.map((node, i) => {
@@ -125,14 +173,14 @@ const SmartRoute: React.FC = () => {
       const col = i % 2;
       // Zigzag logic
       const x = (row % 2 === 0) 
-        ? (col === 0 ? width * 0.25 : width * 0.75) 
-        : (col === 0 ? width * 0.75 : width * 0.25);
+        ? (col === 0 ? layoutWidth * 0.25 : layoutWidth * 0.75) 
+        : (col === 0 ? layoutWidth * 0.75 : layoutWidth * 0.25);
       
-      const y = padding + i * 140; // Vertical spacing
+      const y = padding + i * 160; // Vertical spacing
       return { ...node, x, y, isStart: i === 0, isEnd: i === orderedNodes.length - 1 };
     });
 
-    // --- Draw Edges (Paths) ---
+    // --- 3. Draw Edges (Paths) ---
     routePlan.edges.forEach((edge, i) => {
       const source = nodes.find(n => n.id === edge.from);
       const target = nodes.find(n => n.id === edge.to);
@@ -152,23 +200,51 @@ const SmartRoute: React.FC = () => {
             target
         ]);
 
-        const isSubway = edge.transportMode === 'SUBWAY';
-        const color = isSubway ? '#8b5cf6' : (edge.transportMode === 'WALK' ? "#94a3b8" : "#3b82f6");
-        const dashArray = edge.transportMode === 'WALK' ? "8,6" : "0";
+        // Determine style based on transport mode
+        let edgeColor = "#3b82f6"; // Default Blue (Taxi)
+        let edgeWidth = 4;
+        let edgeDash = "0";
+        let edgeOpacity = 0.8;
+
+        switch (edge.transportMode) {
+          case 'SUBWAY':
+              edgeColor = "#8b5cf6"; // Violet-500
+              edgeWidth = 6;
+              edgeDash = "0";
+              edgeOpacity = 1.0;
+              break;
+          case 'WALK':
+              edgeColor = "#64748b"; // Slate-500
+              edgeWidth = 3;
+              edgeDash = "6,6";
+              edgeOpacity = 0.7;
+              break;
+          case 'BUS':
+              edgeColor = "#059669"; // Emerald-600
+              edgeWidth = 4;
+              edgeDash = "0";
+              break;
+          default:
+              edgeColor = "#3b82f6";
+              edgeWidth = 4;
+              edgeDash = "0";
+              break;
+        }
 
         // Draw Path
-        const path = svg.append("path")
+        const path = contentGroup.append("path")
            .attr("d", pathData || "")
            .attr("fill", "none")
-           .attr("stroke", color)
-           .attr("stroke-width", isSubway ? 5 : 3)
-           .attr("stroke-dasharray", dashArray)
-           .attr("opacity", 0.8)
+           .attr("stroke", edgeColor)
+           .attr("stroke-width", edgeWidth)
+           .attr("stroke-dasharray", edgeDash) // Set initial style
+           .attr("opacity", edgeOpacity)
            .attr("class", "route-path");
 
         const totalLength = path.node()?.getTotalLength() || 0;
 
         // Animate Path Drawing
+        // We set dasharray to totalLength to simulate drawing, then switch back to edgeDash
         path.attr("stroke-dasharray", totalLength + " " + totalLength)
             .attr("stroke-dashoffset", totalLength)
             .transition()
@@ -177,18 +253,16 @@ const SmartRoute: React.FC = () => {
             .ease(d3.easeLinear)
             .attr("stroke-dashoffset", 0)
             .on("end", function() {
-                // Restore dash style for walking after animation
-                if (edge.transportMode === 'WALK') {
-                    d3.select(this).attr("stroke-dasharray", "8,6");
-                }
+                // Restore correct dash style (e.g., dotted for Walk) after animation
+                d3.select(this).attr("stroke-dasharray", edgeDash);
             });
 
         // --- Flowing Particle Animation ---
         if (totalLength > 0) {
-            const particle = svg.append("circle")
+            const particle = contentGroup.append("circle")
                 .attr("r", 4)
                 .attr("fill", "white")
-                .attr("stroke", color)
+                .attr("stroke", edgeColor)
                 .attr("stroke-width", 2)
                 .attr("filter", "drop-shadow(0 0 2px rgba(0,0,0,0.3))")
                 .attr("opacity", 0); // Initially hidden
@@ -214,7 +288,7 @@ const SmartRoute: React.FC = () => {
         // --- Transport Badge ---
         const midX = (source.x + target.x) / 2;
         
-        const badgeGroup = svg.append("g")
+        const badgeGroup = contentGroup.append("g")
             .attr("transform", `translate(${midX}, ${midY})`)
             .attr("opacity", 0); // Start hidden
 
@@ -231,7 +305,7 @@ const SmartRoute: React.FC = () => {
             .attr("height", 28)
             .attr("rx", 14)
             .attr("fill", "white")
-            .attr("stroke", color)
+            .attr("stroke", edgeColor)
             .attr("stroke-width", 2)
             .attr("filter", "drop-shadow(0 4px 3px rgba(0,0,0,0.07))");
 
@@ -239,23 +313,32 @@ const SmartRoute: React.FC = () => {
             .attr("text-anchor", "middle")
             .attr("dy", "0.3em")
             .attr("font-size", "11px")
-            .attr("fill", color)
+            .attr("fill", edgeColor)
             .attr("font-weight", "bold")
             .text(`${getTransportIcon(edge.transportMode)} ${labelText}`);
       }
     });
 
-    // --- Draw Nodes ---
-    const nodeGroups = svg.selectAll("g.node")
+    // --- 4. Draw Nodes ---
+    const nodeGroups = contentGroup.selectAll("g.node")
         .data(nodes)
         .enter()
         .append("g")
         .attr("transform", d => `translate(${d.x}, ${d.y})`)
         .attr("cursor", "pointer")
         .on("mouseenter", (event, d) => {
-           // Show tooltip logic
-           // We need screen coordinates relative to the container
-           setHoveredNode({ node: d, x: d.x, y: d.y });
+           // We need to calculate the tooltip position based on the transformed screen coordinates
+           // d.x and d.y are inside the SVG coordinate system which is scaled/translated.
+           // getBoundingClientRect gives us the absolute screen position of the element.
+           const rect = (event.currentTarget as Element).getBoundingClientRect();
+           const containerRect = containerRef.current?.getBoundingClientRect();
+           
+           if (containerRect) {
+               // Calculate position relative to container
+               const x = rect.left - containerRect.left + rect.width / 2;
+               const y = rect.top - containerRect.top + rect.height / 2;
+               setHoveredNode({ node: d, x, y });
+           }
            
            // Scale up visual
            d3.select(event.currentTarget).select("circle")
@@ -264,6 +347,8 @@ const SmartRoute: React.FC = () => {
              .attr("stroke-width", 6);
         })
         .on("mouseleave", (event) => {
+           // Do not clear hoveredNode immediately if you want to allow moving mouse to tooltip?
+           // For now, standard behavior is hide on leave
            setHoveredNode(null);
            d3.select(event.currentTarget).select("circle")
              .transition().duration(200)
@@ -360,6 +445,14 @@ const SmartRoute: React.FC = () => {
         }
     });
 
+    // --- 5. Initial Zoom Position ---
+    const initialScale = 0.8;
+    const initialX = (containerWidth - layoutWidth * initialScale) / 2 + 100; // Center mostly
+    const initialY = 50;
+    
+    // Apply initial transform
+    svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY).scale(initialScale));
+
   }, [routePlan]);
 
   // --- Helper Functions ---
@@ -454,8 +547,8 @@ const SmartRoute: React.FC = () => {
                 <p className="text-sm opacity-60 mt-1">请在左侧输入攻略文本</p>
             </div>
         ) : (
-            <div ref={containerRef} className="flex-grow overflow-y-auto relative bg-slate-50/50 scrollbar-hide">
-                 <div className="sticky top-0 left-0 right-0 bg-white/90 backdrop-blur-md p-4 border-b border-slate-200 z-10 flex justify-between items-center shadow-sm">
+            <div ref={containerRef} className="flex-grow overflow-hidden relative bg-slate-50/50">
+                 <div className="absolute top-0 left-0 right-0 bg-white/90 backdrop-blur-md p-4 border-b border-slate-200 z-10 flex justify-between items-center shadow-sm">
                     <div>
                       <h2 className="font-black text-xl text-slate-800 tracking-tight">{routePlan.title}</h2>
                       <div className="text-[10px] text-slate-500 flex gap-3 mt-1 font-medium">
@@ -469,19 +562,44 @@ const SmartRoute: React.FC = () => {
                     </div>
                     <div className="flex flex-col items-end">
                         <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold mb-1">{routePlan.nodes.length} 个地点</span>
-                        <span className="text-[10px] text-slate-400">鼠标悬停节点查看详情</span>
+                        <span className="text-[10px] text-slate-400">双击空白处或使用按钮缩放</span>
                     </div>
                  </div>
                  
-                 <div className="flex justify-center min-h-full py-10 relative">
-                   <svg ref={svgRef} className="block"></svg>
+                 {/* Zoom Controls */}
+                 <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-20">
+                    <button 
+                        onClick={handleZoomIn}
+                        className="w-10 h-10 bg-white rounded-lg shadow-md flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 border border-slate-200 transition-colors"
+                        title="放大"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                    </button>
+                    <button 
+                        onClick={handleZoomOut}
+                        className="w-10 h-10 bg-white rounded-lg shadow-md flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 border border-slate-200 transition-colors"
+                        title="缩小"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                    </button>
+                    <button 
+                        onClick={handleResetZoom}
+                        className="w-10 h-10 bg-white rounded-lg shadow-md flex items-center justify-center text-slate-600 hover:text-blue-600 hover:bg-slate-50 border border-slate-200 transition-colors"
+                        title="重置视角"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    </button>
+                 </div>
+
+                 <div className="w-full h-full cursor-grab active:cursor-grabbing">
+                   <svg ref={svgRef} className="block w-full h-full"></svg>
                    
                    {/* Tooltip Overlay */}
                    {hoveredNode && (
                      <div 
-                        className="absolute bg-white rounded-xl shadow-xl border border-slate-100 p-4 w-64 z-20 pointer-events-none animate-fadeIn"
+                        className="absolute bg-white rounded-xl shadow-xl border border-slate-100 p-4 w-64 z-30 pointer-events-none animate-fadeIn"
                         style={{ 
-                            left: hoveredNode.x + 40, // Offset to right of node
+                            left: hoveredNode.x + 40, // Offset to right of node (calculated relative to container)
                             top: hoveredNode.y - 40,  // Slightly above center
                         }}
                      >
