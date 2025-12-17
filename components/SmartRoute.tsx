@@ -109,12 +109,10 @@ const SmartRoute: React.FC = () => {
 
   const handleResetZoom = () => {
     if (svgRef.current && zoomBehavior.current && routePlan) {
-      // Re-center logic similar to initial load
       const containerWidth = containerRef.current?.clientWidth || 800;
-      const initialScale = 0.8;
-      // Estimate content width roughly
-      const layoutWidth = Math.max(containerWidth, 800);
-      const initialX = (containerWidth - layoutWidth * initialScale) / 2 + 100; // offset slightly
+      const initialScale = Math.min(containerWidth / 900, 0.8);
+      // Center based on fixed layout width of 800
+      const initialX = (containerWidth - 800 * initialScale) / 2;
       
       d3.select(svgRef.current)
         .transition()
@@ -131,7 +129,7 @@ const SmartRoute: React.FC = () => {
     svg.selectAll("*").remove(); // Clear previous drawing
 
     const containerWidth = containerRef.current.clientWidth;
-    const containerHeight = containerRef.current.clientHeight;
+    // const containerHeight = containerRef.current.clientHeight; // Unused for vertical scroll layout
 
     // --- 1. Setup Zoom & Groups ---
     const contentGroup = svg.append("g").attr("class", "content-group");
@@ -161,22 +159,32 @@ const SmartRoute: React.FC = () => {
       .attr("d", "M0,-5L10,0L0,5")
       .attr("fill", "#94a3b8");
 
-    const layoutWidth = Math.max(containerWidth, 800); // Fixed virtual width for layout consistency
-    const padding = 80;
-    
+    // Layout Constants
+    const LAYOUT_WIDTH = 800;
+    const COLUMN_LEFT = LAYOUT_WIDTH * 0.25;
+    const COLUMN_RIGHT = LAYOUT_WIDTH * 0.75;
+    const ROW_HEIGHT = 140; // Balanced vertical spacing
+    const PADDING_TOP = 80;
+
     // Sort Nodes based on connectivity (Topology) rather than array order
     const orderedNodes = reorderNodes(routePlan.nodes, routePlan.edges);
 
-    // Calculate positions (Snake layout: Down, then zig-zag)
+    // Calculate positions (Snake layout)
     const nodes = orderedNodes.map((node, i) => {
       const row = Math.floor(i / 2);
       const col = i % 2;
-      // Zigzag logic
-      const x = (row % 2 === 0) 
-        ? (col === 0 ? layoutWidth * 0.25 : layoutWidth * 0.75) 
-        : (col === 0 ? layoutWidth * 0.75 : layoutWidth * 0.25);
       
-      const y = padding + i * 160; // Vertical spacing
+      // Logic for Snake Pattern:
+      // Row 0: Left -> Right
+      // Row 1: Right -> Left
+      // Row 2: Left -> Right
+      // ...
+      const isEvenRow = row % 2 === 0;
+      const isLeft = isEvenRow ? (col === 0) : (col === 1);
+      
+      const x = isLeft ? COLUMN_LEFT : COLUMN_RIGHT;
+      const y = PADDING_TOP + i * ROW_HEIGHT;
+      
       return { ...node, x, y, isStart: i === 0, isEnd: i === orderedNodes.length - 1 };
     });
 
@@ -192,7 +200,7 @@ const SmartRoute: React.FC = () => {
             .curve(d3.curveBasis);
 
         const midY = (source.y + target.y) / 2;
-        // Adjust control points for a nicer "S" curve
+        // Control points for S-curve
         const pathData = lineGenerator([
             source,
             { x: source.x, y: midY },
@@ -327,28 +335,21 @@ const SmartRoute: React.FC = () => {
         .attr("transform", d => `translate(${d.x}, ${d.y})`)
         .attr("cursor", "pointer")
         .on("mouseenter", (event, d) => {
-           // We need to calculate the tooltip position based on the transformed screen coordinates
-           // d.x and d.y are inside the SVG coordinate system which is scaled/translated.
-           // getBoundingClientRect gives us the absolute screen position of the element.
            const rect = (event.currentTarget as Element).getBoundingClientRect();
            const containerRect = containerRef.current?.getBoundingClientRect();
            
            if (containerRect) {
-               // Calculate position relative to container
                const x = rect.left - containerRect.left + rect.width / 2;
                const y = rect.top - containerRect.top + rect.height / 2;
                setHoveredNode({ node: d, x, y });
            }
            
-           // Scale up visual
            d3.select(event.currentTarget).select("circle")
              .transition().duration(200)
              .attr("r", 30)
              .attr("stroke-width", 6);
         })
         .on("mouseleave", (event) => {
-           // Do not clear hoveredNode immediately if you want to allow moving mouse to tooltip?
-           // For now, standard behavior is hide on leave
            setHoveredNode(null);
            d3.select(event.currentTarget).select("circle")
              .transition().duration(200)
@@ -446,8 +447,9 @@ const SmartRoute: React.FC = () => {
     });
 
     // --- 5. Initial Zoom Position ---
-    const initialScale = 0.8;
-    const initialX = (containerWidth - layoutWidth * initialScale) / 2 + 100; // Center mostly
+    const initialScale = Math.min(containerWidth / (LAYOUT_WIDTH + 100), 0.8);
+    // Center based on LAYOUT_WIDTH
+    const initialX = (containerWidth - LAYOUT_WIDTH * initialScale) / 2;
     const initialY = 50;
     
     // Apply initial transform
