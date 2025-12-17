@@ -67,6 +67,7 @@ const reorderNodes = (originalNodes: RouteNode[], edges: RouteEdge[]): RouteNode
 const SmartRoute: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
   const [hoveredNode, setHoveredNode] = useState<{ node: RouteNode, x: number, y: number } | null>(null);
   
@@ -77,13 +78,16 @@ const SmartRoute: React.FC = () => {
   const handleGenerate = async () => {
     if (!inputText.trim()) return;
     setLoading(true);
+    setErrorMsg(null);
     setRoutePlan(null);
     setHoveredNode(null);
     try {
       const plan = await generateRoutePlan(inputText);
       setRoutePlan(plan);
-    } catch (e) {
-      alert("生成路线失败，请检查网络或文本内容。");
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : "未知错误";
+      setErrorMsg(`生成失败: ${msg}`);
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -515,6 +519,12 @@ const SmartRoute: React.FC = () => {
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
         />
+
+        {errorMsg && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 font-medium animate-fadeIn">
+                ⚠️ {errorMsg}
+            </div>
+        )}
         
         <div className="flex gap-2">
             <button

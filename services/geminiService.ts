@@ -1,15 +1,21 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RiskAnalysis, MenuAnalysis, DestinationResult, RoutePlan } from "../types";
 
-// Initialize Gemini Client
-// CRITICAL: process.env.API_KEY is assumed to be available
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get initialized client or throw error if key is missing
+const getAiClient = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error("API_KEY 未配置。请在 Vercel 环境变量或 .env 文件中设置您的 Google Gemini API Key。");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 /**
  * Generate a structured route plan with transport estimates from text
  */
 export const generateRoutePlan = async (text: string): Promise<RoutePlan> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `你是一个智能旅游行程规划师。请分析用户提供的旅游攻略文本，生成一份详细的路线规划。
@@ -68,9 +74,12 @@ export const generateRoutePlan = async (text: string): Promise<RoutePlan> => {
     if (response.text) {
       return JSON.parse(response.text) as RoutePlan;
     }
-    throw new Error("No response text from Gemini");
-  } catch (error) {
+    throw new Error("模型未返回有效文本");
+  } catch (error: any) {
     console.error("Route generation failed:", error);
+    // Rethrow with user-friendly message if possible
+    if (error.message?.includes('API_KEY')) throw error;
+    if (error.message?.includes('fetch failed')) throw new Error("网络连接失败。如果您在中国大陆，请确保您的网络可以访问 Google API。");
     throw error;
   }
 };
@@ -80,6 +89,7 @@ export const generateRoutePlan = async (text: string): Promise<RoutePlan> => {
  */
 export const analyzeItinerary = async (text: string): Promise<RiskAnalysis> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `你是一位厦门旅游安全专家。请分析以下行程是否存在消费陷阱、宰客风险或不合理的安排，特别是关于海鲜市场、出租车推荐和茶叶骗局等方面。
@@ -126,6 +136,7 @@ export const analyzeItinerary = async (text: string): Promise<RiskAnalysis> => {
  */
 export const analyzeMenuImage = async (base64Image: string): Promise<MenuAnalysis> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: {
@@ -169,6 +180,7 @@ export const analyzeMenuImage = async (base64Image: string): Promise<MenuAnalysi
  */
 export const editImageWithGemini = async (base64Image: string, prompt: string): Promise<string> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
@@ -207,6 +219,7 @@ export const editImageWithGemini = async (base64Image: string, prompt: string): 
  */
 export const searchDestinations = async (location: string): Promise<DestinationResult> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `请推荐 5 个 ${location} 值得一去的旅游景点，并简要说明推荐理由。同时列出这些地方可能存在的“坑”或避雷建议。请用 Markdown 格式回复。`,
