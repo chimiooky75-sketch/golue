@@ -5,9 +5,66 @@ import { RiskAnalysis, MenuAnalysis, DestinationResult, RoutePlan } from "../typ
 const getAiClient = () => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    throw new Error("API_KEY 未配置。请在 Vercel 环境变量或 .env 文件中设置您的 Google Gemini API Key。");
+    throw new Error("API_KEY_MISSING");
   }
   return new GoogleGenAI({ apiKey });
+};
+
+// --- MOCK DATA FOR DEMO FALLBACK (演示数据) ---
+
+const MOCK_ROUTE_PLAN: RoutePlan = {
+  title: "厦门文艺慢游 (演示模式 - API未配置)",
+  nodes: [
+    { id: 1, name: "南普陀寺", description: "闽南佛教圣地，背依五老峰，可登高望远。", type: "SCENERY", estimatedStay: "1.5小时" },
+    { id: 2, name: "厦大白城沙滩", description: "漫步环岛路木栈道，打卡双子塔合影位。", type: "SCENERY", estimatedStay: "1小时" },
+    { id: 3, name: "沙坡尾", description: "老厦门避风坞改造的艺术西区，网红店云集。", type: "FOOD", estimatedStay: "2小时" },
+    { id: 4, "name": "顶澳仔猫街", "description": "猫咪主题文化街区，有很多可爱的涂鸦和周边。", "type": "OTHER", "estimatedStay": "40分钟" },
+    { id: 5, name: "中山路步行街", description: "南洋骑楼建筑群，品尝土笋冻、沙茶面。", type: "FOOD", estimatedStay: "2小时" }
+  ],
+  edges: [
+    { from: 1, to: 2, transportMode: "WALK", duration: "15分钟", distance: "900m", details: "步行经厦大南门" },
+    { from: 2, to: 3, transportMode: "TAXI", duration: "8分钟", distance: "2.5km", details: "打车约15元" },
+    { from: 3, to: 4, transportMode: "WALK", duration: "10分钟", distance: "600m", details: "沿大学路步行" },
+    { from: 4, to: 5, transportMode: "BUS", duration: "25分钟", distance: "3.5km", details: "公交 1路 / 22路" }
+  ]
+};
+
+const MOCK_RISK_ANALYSIS: RiskAnalysis = {
+  score: 85,
+  summary: "⚠️ 检测到典型消费陷阱！(演示数据：API未连接，仅供参考) 该行程包含高风险的海鲜加工店和非正规一日游项目。",
+  risks: [
+    { location: "某某海鲜大排档", riskLevel: "HIGH", reason: "典型“阴阳菜单”高发区，出租车司机回扣店。", suggestion: "请务必在大众点评查看最新差评，推荐去八市自己买。" },
+    { location: "珍珠购买", riskLevel: "MEDIUM", reason: "路边摊多为塑料仿制品，价格虚高。", suggestion: "不仅要砍价，更建议去正规商场专柜。" },
+    { location: "茶艺表演", riskLevel: "LOW", reason: "可能存在推销高价茶叶环节。", suggestion: "保持理智，只喝不买，或明确拒绝。" }
+  ]
+};
+
+const MOCK_MENU_ANALYSIS: MenuAnalysis = {
+  trapsFound: ["隐藏计量单位：/50g 而非 /500g", "加工费未明确标注", "时价菜品未提前告知"],
+  verdict: "DANGER",
+  explanation: "这是一张典型的针对游客的“杀猪”菜单 (演示模式)。注意看右下角极小的字体标注了价格单位为50克，实际价格是标价的10倍。建议立即离开或拨打12315。"
+};
+
+const MOCK_DESTINATION_RESULT: DestinationResult = {
+  text: "### 推荐景点 (演示数据)\n\n由于未连接 API，以下是默认推荐：\n\n1. **鼓浪屿**: 世界文化遗产，建筑博物馆。\n2. **环岛路**: 最美马拉松赛道，适合骑行。\n3. **植物园**: 雨林世界和多肉植物区是拍照圣地。\n\n**⚠️ 避雷建议**: 鼓浪屿上的“老字号”馅饼很多是贴牌的；渡轮票需提前在支付宝购买。",
+  mapLinks: [
+    { title: "鼓浪屿轮渡码头", uri: "https://www.google.com/maps/search/?api=1&query=鼓浪屿" },
+    { title: "厦门园林植物园", uri: "https://www.google.com/maps/search/?api=1&query=厦门植物园" }
+  ]
+};
+
+// Helper to handle API failures gracefully by returning mock data
+const handleApiError = (error: any, mockData: any, serviceName: string) => {
+  console.error(`${serviceName} failed:`, error);
+  const isKeyError = error.message === "API_KEY_MISSING" || error.message?.includes('API key');
+  const isNetError = error.message?.includes('fetch failed') || error.message?.includes('Network');
+  
+  if (isKeyError || isNetError) {
+    console.warn(`Falling back to MOCK data for ${serviceName} due to missing Key or Network error.`);
+    // Simulate network delay for realism
+    return new Promise(resolve => setTimeout(() => resolve(mockData), 1000));
+  }
+  throw error;
 };
 
 /**
@@ -74,13 +131,9 @@ export const generateRoutePlan = async (text: string): Promise<RoutePlan> => {
     if (response.text) {
       return JSON.parse(response.text) as RoutePlan;
     }
-    throw new Error("模型未返回有效文本");
+    throw new Error("模型未返回有效数据");
   } catch (error: any) {
-    console.error("Route generation failed:", error);
-    // Rethrow with user-friendly message if possible
-    if (error.message?.includes('API_KEY')) throw error;
-    if (error.message?.includes('fetch failed')) throw new Error("网络连接失败。如果您在中国大陆，请确保您的网络可以访问 Google API。");
-    throw error;
+    return handleApiError(error, MOCK_ROUTE_PLAN, "Route Generation") as Promise<RoutePlan>;
   }
 };
 
@@ -125,9 +178,8 @@ export const analyzeItinerary = async (text: string): Promise<RiskAnalysis> => {
       return JSON.parse(response.text) as RiskAnalysis;
     }
     throw new Error("No response text from Gemini");
-  } catch (error) {
-    console.error("Analysis failed:", error);
-    throw error;
+  } catch (error: any) {
+    return handleApiError(error, MOCK_RISK_ANALYSIS, "Itinerary Analysis") as Promise<RiskAnalysis>;
   }
 };
 
@@ -169,9 +221,8 @@ export const analyzeMenuImage = async (base64Image: string): Promise<MenuAnalysi
       return JSON.parse(response.text) as MenuAnalysis;
     }
     throw new Error("No analysis result");
-  } catch (error) {
-    console.error("Menu analysis failed:", error);
-    throw error;
+  } catch (error: any) {
+    return handleApiError(error, MOCK_MENU_ANALYSIS, "Menu Analysis") as Promise<MenuAnalysis>;
   }
 };
 
@@ -208,7 +259,11 @@ export const editImageWithGemini = async (base64Image: string, prompt: string): 
     }
     
     throw new Error("No image generated in response");
-  } catch (error) {
+  } catch (error: any) {
+    const isKeyError = error.message === "API_KEY_MISSING" || error.message?.includes('API key');
+    if (isKeyError) {
+      throw new Error("API Key 未配置，无法使用 AI 修图功能。");
+    }
     console.error("Image editing failed:", error);
     throw error;
   }
@@ -240,8 +295,7 @@ export const searchDestinations = async (location: string): Promise<DestinationR
       text: response.text || "未能获取相关信息",
       mapLinks
     };
-  } catch (error) {
-    console.error("Destination search failed:", error);
-    throw error;
+  } catch (error: any) {
+    return handleApiError(error, MOCK_DESTINATION_RESULT, "Destination Search") as Promise<DestinationResult>;
   }
 };
