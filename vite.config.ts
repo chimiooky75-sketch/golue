@@ -2,13 +2,15 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
-  // Cast process to any to avoid type error regarding cwd()
+  // Load env file based on `mode` in the current working directory.
+  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
   const env = loadEnv(mode, (process as any).cwd(), '');
   return {
     plugins: [react()],
     define: {
       // This ensures code using `process.env.API_KEY` works in the browser
-      'process.env.API_KEY': JSON.stringify(env.API_KEY),
+      // Fallback to empty string if undefined to prevent runtime "process is not defined" or undefined errors
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || process.env.API_KEY || ''),
     }
   };
 });
